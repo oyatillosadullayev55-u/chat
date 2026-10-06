@@ -120,7 +120,7 @@ class _HomePageState extends State<HomePage> {
                         padding: const EdgeInsets.all(24),
                         child: Text(
                           s.scanning
-                              ? 'Qurilmalar qidirilmoqda...\nIkkala telefonda ham ilova ochiq bo\'lishi kerak.'
+                              ? 'Qurilmalar qidirilmoqda...\nAvval ikkala telefonni Bluetooth sozlamalarida juftlang (pair).'
                               : 'Qidirishni boshlash uchun pastdagi Bluetooth tugmasini bosing.',
                           textAlign: TextAlign.center,
                           style: const TextStyle(color: Colors.grey),
@@ -196,7 +196,7 @@ class _HomePageState extends State<HomePage> {
     final last = msgs.isEmpty ? null : msgs.last;
     final unread = s.unread[p.id] ?? 0;
     final sub = last != null
-        ? last.text
+        ? last.preview
         : p.connected
         ? 'Ulangan'
         : p.connecting
