@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -20,8 +21,8 @@ class ChatService extends ChangeNotifier with WidgetsBindingObserver {
   String? error;
   String? activeChatId;
 
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  FirebaseAuth? _auth;
+  FirebaseFirestore? _firestore;
 
   // Cache
   List<AppUser> registeredUsers = [];
@@ -48,15 +49,6 @@ class ChatService extends ChangeNotifier with WidgetsBindingObserver {
 
   // ---------- Inizializatsiya ----------
   Future<void> load() async {
-    try {
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
-      isFirebaseAvailable = true;
-    } catch (e) {
-      isFirebaseAvailable = false;
-    }
-
     final prefs = await SharedPreferences.getInstance();
     myName = prefs.getString('userName') ?? '';
     myUid = prefs.getString('userUid') ?? '';
@@ -66,18 +58,33 @@ class ChatService extends ChangeNotifier with WidgetsBindingObserver {
       await prefs.setString('userUid', myUid);
     }
 
-    if (isFirebaseAvailable) {
+    try {
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
+      }
+      _auth = FirebaseAuth.instance;
+      _firestore = FirebaseFirestore.instance;
+      isFirebaseAvailable = true;
+    } catch (_) {
+      isFirebaseAvailable = false;
+    }
+
+    if (isFirebaseAvailable && _auth != null) {
       try {
-        if (_auth.currentUser == null) {
-          final userCredential = await _auth.signInAnonymously();
+        if (_auth!.currentUser == null) {
+          final userCredential = await _auth!.signInAnonymously();
           if (userCredential.user != null) {
             myUid = userCredential.user!.uid;
             await prefs.setString('userUid', myUid);
           }
         } else {
-          myUid = _auth.currentUser!.uid;
+          myUid = _auth!.currentUser!.uid;
         }
-      } catch (_) {}
+      } catch (_) {
+        // Anonim kirishda xatolik bolsa ham lokal rejimda ishlayveradi
+      }
     }
 
     if (hasName) {
@@ -104,9 +111,9 @@ class ChatService extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _syncUserProfile() async {
-    if (!isFirebaseAvailable || myUid.isEmpty) return;
+    if (!isFirebaseAvailable || _firestore == null || myUid.isEmpty) return;
     try {
-      final userRef = _firestore.collection('users').doc(myUid);
+      final userRef = _firestore!.collection('users').doc(myUid);
       await userRef.set({
         'uid': myUid,
         'name': myName,
@@ -118,9 +125,9 @@ class ChatService extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _updateOnlineStatus(bool online) {
-    if (!isFirebaseAvailable || myUid.isEmpty) return;
+    if (!isFirebaseAvailable || _firestore == null || myUid.isEmpty) return;
     try {
-      _firestore.collection('users').doc(myUid).update({
+      _firestore!.collection('users').doc(myUid).update({
         'isOnline': online,
         'lastSeen': DateTime.now().millisecondsSinceEpoch,
       });
@@ -129,18 +136,20 @@ class ChatService extends ChangeNotifier with WidgetsBindingObserver {
 
   // ---------- Qidiruv va Ro'yhatdan o'tgan foydalanuvchilar ----------
   void _listenToUsers() {
-    if (!isFirebaseAvailable) return;
+    if (!isFirebaseAvailable || _firestore == null) return;
     _usersSub?.cancel();
-    _usersSub = _firestore
-        .collection('users')
-        .snapshots()
-        .listen((snapshot) {
-      registeredUsers = snapshot.docs
-          .map((doc) => AppUser.fromMap(doc.data(), doc.id))
-          .where((u) => u.uid != myUid)
-          .toList();
-      notifyListeners();
-    }, onError: (_) {});
+    try {
+      _usersSub = _firestore!
+          .collection('users')
+          .snapshots()
+          .listen((snapshot) {
+        registeredUsers = snapshot.docs
+            .map((doc) => AppUser.fromMap(doc.data(), doc.id))
+            .where((u) => u.uid != myUid)
+            .toList();
+        notifyListeners();
+      }, onError: (_) {});
+    } catch (_) {}
   }
 
   List<AppUser> searchRegisteredUsers(String query) {
@@ -160,21 +169,25 @@ class ChatService extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Stream<List<Message>> getMessagesStream(String peerUid) {
-    if (!isFirebaseAvailable) {
+    if (!isFirebaseAvailable || _firestore == null) {
       return Stream.value(localChats[peerUid] ?? []);
     }
     final chatId = getChatId(peerUid);
-    return _firestore
-        .collection('chats')
-        .doc(chatId)
-        .collection('messages')
-        .orderBy('timestamp', descending: true)
-        .snapshots()
-        .map((snapshot) {
-      return snapshot.docs
-          .map((doc) => Message.fromMap(doc.data(), doc.id, myUid))
-          .toList();
-    });
+    try {
+      return _firestore!
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .orderBy('timestamp', descending: true)
+          .snapshots()
+          .map((snapshot) {
+        return snapshot.docs
+            .map((doc) => Message.fromMap(doc.data(), doc.id, myUid))
+            .toList();
+      }).handleError((_) => <Message>[]);
+    } catch (_) {
+      return Stream.value(localChats[peerUid] ?? []);
+    }
   }
 
   Future<void> send(String peerUid, String text) async {
@@ -189,10 +202,10 @@ class ChatService extends ChangeNotifier with WidgetsBindingObserver {
       type: MsgType.text,
     );
 
-    if (isFirebaseAvailable) {
+    if (isFirebaseAvailable && _firestore != null) {
       try {
         final chatId = getChatId(peerUid);
-        final chatRef = _firestore.collection('chats').doc(chatId);
+        final chatRef = _firestore!.collection('chats').doc(chatId);
         final msgRef = chatRef.collection('messages').doc();
 
         await msgRef.set(msg.toMap());
@@ -205,7 +218,7 @@ class ChatService extends ChangeNotifier with WidgetsBindingObserver {
           'lastSenderId': myUid,
         }, SetOptions(merge: true));
       } catch (e) {
-        error = 'Xabar yuborishda xatolik: $e';
+        localChats.putIfAbsent(peerUid, () => []).add(msg);
         notifyListeners();
       }
     } else {
@@ -217,11 +230,16 @@ class ChatService extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> sendFile(String peerUid, String srcPath,
       {required bool image}) async {
     try {
-      final file = File(srcPath);
-      final size = await file.length();
-      final bytes = await file.readAsBytes();
-      final base64String = base64Encode(bytes);
       final name = srcPath.split(RegExp(r'[\\/]')).last;
+      String pathOrData = srcPath;
+
+      if (!kIsWeb) {
+        final file = File(srcPath);
+        final bytes = await file.readAsBytes();
+        final base64String = base64Encode(bytes);
+        pathOrData =
+            'data:${image ? "image/jpeg" : "application/octet-stream"};base64,$base64String';
+      }
 
       final msg = Message(
         senderId: myUid,
@@ -229,73 +247,80 @@ class ChatService extends ChangeNotifier with WidgetsBindingObserver {
         text: name,
         mine: true,
         type: image ? MsgType.image : MsgType.file,
-        size: size,
-        path: 'data:${image ? "image/jpeg" : "application/octet-stream"};base64,$base64String',
+        path: pathOrData,
       );
 
-      if (isFirebaseAvailable) {
-        final chatId = getChatId(peerUid);
-        final chatRef = _firestore.collection('chats').doc(chatId);
-        final msgRef = chatRef.collection('messages').doc();
+      if (isFirebaseAvailable && _firestore != null) {
+        try {
+          final chatId = getChatId(peerUid);
+          final chatRef = _firestore!.collection('chats').doc(chatId);
+          final msgRef = chatRef.collection('messages').doc();
 
-        await msgRef.set(msg.toMap());
+          await msgRef.set(msg.toMap());
 
-        await chatRef.set({
-          'chatId': chatId,
-          'participants': [myUid, peerUid],
-          'lastMessage': image ? '📷 Rasm' : '📎 $name',
-          'lastTime': DateTime.now().millisecondsSinceEpoch,
-          'lastSenderId': myUid,
-        }, SetOptions(merge: true));
+          await chatRef.set({
+            'chatId': chatId,
+            'participants': [myUid, peerUid],
+            'lastMessage': image ? '📷 Rasm' : '📎 $name',
+            'lastTime': DateTime.now().millisecondsSinceEpoch,
+            'lastSenderId': myUid,
+          }, SetOptions(merge: true));
+        } catch (_) {
+          localChats.putIfAbsent(peerUid, () => []).add(msg);
+          notifyListeners();
+        }
       } else {
         localChats.putIfAbsent(peerUid, () => []).add(msg);
         notifyListeners();
       }
     } catch (e) {
-      error = 'Fayl yuborishda xatolik: $e';
+      error = 'Fayl yuborishda xatolik';
       notifyListeners();
     }
   }
 
   Stream<List<ChatConversation>> getConversationsStream() {
-    if (!isFirebaseAvailable) {
+    if (!isFirebaseAvailable || _firestore == null) {
       return Stream.value([]);
     }
-    return _firestore
-        .collection('chats')
-        .where('participants', arrayContains: myUid)
-        .snapshots()
-        .map((snapshot) {
-      final list = <ChatConversation>[];
-      for (final doc in snapshot.docs) {
-        final data = doc.data();
-        final participants = List<String>.from(data['participants'] ?? []);
-        final peerUid = participants.firstWhere(
-          (id) => id != myUid,
-          orElse: () => '',
-        );
+    try {
+      return _firestore!
+          .collection('chats')
+          .where('participants', arrayContains: myUid)
+          .snapshots()
+          .map((snapshot) {
+        final list = <ChatConversation>[];
+        for (final doc in snapshot.docs) {
+          final data = doc.data();
+          final participants = List<String>.from(data['participants'] ?? []);
+          final peerUid = participants.firstWhere(
+            (id) => id != myUid,
+            orElse: () => '',
+          );
 
-        if (peerUid.isEmpty) continue;
+          if (peerUid.isEmpty) continue;
 
-        // Peer ismiga moslash
-        final peerUser = registeredUsers.firstWhere(
-          (u) => u.uid == peerUid,
-          orElse: () => AppUser(uid: peerUid, name: 'Foydalanuvchi'),
-        );
+          final peerUser = registeredUsers.firstWhere(
+            (u) => u.uid == peerUid,
+            orElse: () => AppUser(uid: peerUid, name: 'Foydalanuvchi'),
+          );
 
-        list.add(ChatConversation(
-          chatId: doc.id,
-          peerId: peerUid,
-          peerName: peerUser.name,
-          lastMessage: data['lastMessage'] ?? '',
-          lastTime: DateTime.fromMillisecondsSinceEpoch(
-            data['lastTime'] ?? DateTime.now().millisecondsSinceEpoch,
-          ),
-        ));
-      }
-      list.sort((a, b) => b.lastTime.compareTo(a.lastTime));
-      return list;
-    });
+          list.add(ChatConversation(
+            chatId: doc.id,
+            peerId: peerUid,
+            peerName: peerUser.name,
+            lastMessage: data['lastMessage'] ?? '',
+            lastTime: DateTime.fromMillisecondsSinceEpoch(
+              data['lastTime'] ?? DateTime.now().millisecondsSinceEpoch,
+            ),
+          ));
+        }
+        list.sort((a, b) => b.lastTime.compareTo(a.lastTime));
+        return list;
+      }).handleError((_) => <ChatConversation>[]);
+    } catch (_) {
+      return Stream.value([]);
+    }
   }
 
   void openChat(String peerUid) {

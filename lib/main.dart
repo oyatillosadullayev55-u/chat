@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'models/models.dart';
@@ -8,6 +9,16 @@ import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Web hamda mobil tarmoq va Firebase xatoliklarida qizil ekran (crash) berib to'xtab qolmasligi uchun
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+  };
+
+  PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
+    return true; // Unhandled Web / Firebase errors handled safely
+  };
+
   runApp(const ChatApp());
 }
 
@@ -52,7 +63,6 @@ class _ChatAppState extends State<ChatApp> {
               body: Center(child: CircularProgressIndicator(color: kPurple)),
             );
           }
-          // Ism kiritilmaguncha ilovaga kirib bo'lmaydi
           if (!_service.hasName) return NamePage(service: _service);
           return HomePage(service: _service);
         },
