@@ -14,7 +14,8 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  int _tab = 0;
+  int _tab = 0; // 0: Chatlar, 1: Barcha foydalanuvchilar (Qidiruv)
+  final _searchCtrl = TextEditingController();
   ChatService get s => widget.service;
 
   @override
@@ -25,6 +26,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    _searchCtrl.dispose();
     s.removeListener(_showError);
     super.dispose();
   }
@@ -41,9 +43,17 @@ class _HomePageState extends State<HomePage> {
     final name = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Ismingiz'),
-        content: TextField(controller: ctrl, autofocus: true),
+        title: const Text('Ismingizni o\'zgartirish'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Yangi ism kiriting'),
+        ),
         actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Bekor qilish'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context, ctrl.text),
             child: const Text('Saqlash'),
@@ -51,18 +61,20 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
     );
-    if (name != null) s.setName(name);
+    if (name != null && name.trim().isNotEmpty) s.setName(name);
   }
 
-  Future<void> _onTap(Peer p) async {
-    if (!p.connected) {
-      s.connect(p.id);
-      return;
-    }
-    s.openChat(p.id);
+  void _openChatWithUser(String peerUid, String peerName) async {
+    s.openChat(peerUid);
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => ChatPage(service: s, peerId: p.id)),
+      MaterialPageRoute(
+        builder: (_) => ChatPage(
+          service: s,
+          peerUid: peerUid,
+          peerName: peerName,
+        ),
+      ),
     );
     s.closeChat();
   }
@@ -72,21 +84,10 @@ class _HomePageState extends State<HomePage> {
     return ListenableBuilder(
       listenable: s,
       builder: (context, _) {
-        final list = s.peers.values
-            .where((p) => _tab == 0 || p.connected)
-            .toList()
-          ..sort((a, b) => (b.connected ? 1 : 0) - (a.connected ? 1 : 0));
+        final query = _searchCtrl.text.trim();
+        final searchResults = s.searchRegisteredUsers(query);
 
         return Scaffold(
-          floatingActionButton: FloatingActionButton(
-            backgroundColor: kPurple,
-            shape: const CircleBorder(),
-            onPressed: s.scanning ? s.stopScan : s.startScan,
-            child: Icon(
-              s.scanning ? Icons.bluetooth_searching : Icons.bluetooth,
-              color: Colors.white,
-            ),
-          ),
           body: SafeArea(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -94,43 +95,64 @@ class _HomePageState extends State<HomePage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const SizedBox(height: 16),
+                  // App Header
                   Row(
                     children: [
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('Salom,',
-                              style: TextStyle(color: Colors.grey)),
-                          Text(s.myName,
-                              style: const TextStyle(
-                                  fontSize: 24, fontWeight: FontWeight.w700)),
+                          const Text('Salom 👋',
+                              style: TextStyle(color: Colors.grey, fontSize: 14)),
+                          Text(
+                            s.myName,
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
                         ],
                       ),
                       const Spacer(),
-                      _circleButton(Icons.more_vert, _editName),
+                      _circleButton(Icons.edit_outlined, _editName),
                     ],
                   ),
-                  const SizedBox(height: 20),
-                  _tabs(),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: list.isEmpty
-                        ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Text(
-                          s.scanning
-                              ? 'Qurilmalar qidirilmoqda...\nAvval ikkala telefonni Bluetooth sozlamalarida juftlang (pair).'
-                              : 'Qidirishni boshlash uchun pastdagi Bluetooth tugmasini bosing.',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.grey),
-                        ),
+                  const SizedBox(height: 16),
+
+                  // Qidiruv maydoni
+                  TextField(
+                    controller: _searchCtrl,
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      hintText: 'Foydalanuvchilarni qidirish...',
+                      prefixIcon: const Icon(Icons.search, color: kPurple),
+                      suffixIcon: query.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                _searchCtrl.clear();
+                                setState(() {});
+                              },
+                            )
+                          : null,
+                      filled: true,
+                      fillColor: const Color(0xFFF1F1F4),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(30),
+                        borderSide: BorderSide.none,
                       ),
-                    )
-                        : ListView.builder(
-                      itemCount: list.length,
-                      itemBuilder: (_, i) => _tile(list[i]),
                     ),
+                  ),
+
+                  const SizedBox(height: 16),
+                  _tabs(),
+                  const SizedBox(height: 12),
+
+                  // Tab tarkibi
+                  Expanded(
+                    child: _tab == 0
+                        ? _buildConversationsList()
+                        : _buildUsersList(searchResults),
                   ),
                 ],
               ),
@@ -141,21 +163,176 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _buildConversationsList() {
+    return StreamBuilder<List<ChatConversation>>(
+      stream: s.getConversationsStream(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: kPurple),
+          );
+        }
+
+        final chats = snapshot.data ?? [];
+        if (chats.isEmpty) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.chat_bubble_outline,
+                      size: 60, color: Colors.grey),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Hozircha suhbatlar yo\'q',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    '"Foydalanuvchilar" bo\'limidan ro\'yhatdan o\'tgan odamlarni topib chat boshlang.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey, fontSize: 13),
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: kPurple,
+                      foregroundColor: Colors.white,
+                      shape: StadiumBorder(),
+                    ),
+                    onPressed: () => setState(() => _tab = 1),
+                    icon: const Icon(Icons.person_search),
+                    label: const Text('Odamlarni Qidirish'),
+                  )
+                ],
+              ),
+            ),
+          );
+        }
+
+        return ListView.builder(
+          itemCount: chats.length,
+          itemBuilder: (_, i) {
+            final chat = chats[i];
+            final color = Colors.primaries[
+                chat.peerName.hashCode.abs() % Colors.primaries.length];
+
+            return ListTile(
+              contentPadding: const EdgeInsets.symmetric(vertical: 4),
+              onTap: () => _openChatWithUser(chat.peerId, chat.peerName),
+              leading: CircleAvatar(
+                radius: 26,
+                backgroundColor: color.shade300,
+                child: Text(
+                  chat.peerName.isEmpty ? '?' : chat.peerName[0].toUpperCase(),
+                  style: const TextStyle(color: Colors.white, fontSize: 20),
+                ),
+              ),
+              title: Text(
+                chat.peerName,
+                style: const TextStyle(
+                    fontWeight: FontWeight.w600, fontSize: 15),
+              ),
+              subtitle: Text(
+                chat.lastMessage,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              trailing: Text(
+                hm(chat.lastTime),
+                style: const TextStyle(fontSize: 11, color: Colors.grey),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildUsersList(List<AppUser> users) {
+    if (users.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'Foydalanuvchilar topilmadi.\nUshbu ilovani yuklab ro\'yhatdan o\'tgan foydalanuvchilar shu yerda ko\'rinadi.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey),
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: users.length,
+      itemBuilder: (_, i) {
+        final u = users[i];
+        final color =
+            Colors.primaries[u.name.hashCode.abs() % Colors.primaries.length];
+
+        return ListTile(
+          contentPadding: const EdgeInsets.symmetric(vertical: 4),
+          onTap: () => _openChatWithUser(u.uid, u.name),
+          leading: Stack(
+            children: [
+              CircleAvatar(
+                radius: 26,
+                backgroundColor: color.shade300,
+                child: Text(
+                  u.name.isEmpty ? '?' : u.name[0].toUpperCase(),
+                  style: const TextStyle(color: Colors.white, fontSize: 20),
+                ),
+              ),
+              if (u.isOnline)
+                Positioned(
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    width: 14,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      color: Colors.greenAccent.shade700,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          title: Text(
+            u.name,
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+          ),
+          subtitle: Text(
+            u.isOnline ? 'Online' : 'Ro\'yxatdan o\'tgan',
+            style: TextStyle(
+              fontSize: 12,
+              color: u.isOnline ? Colors.green : Colors.grey,
+            ),
+          ),
+          trailing: const Icon(Icons.chat_bubble_outline, color: kPurple),
+        );
+      },
+    );
+  }
+
   Widget _circleButton(IconData icon, VoidCallback onTap) => InkResponse(
-    onTap: onTap,
-    child: Container(
-      width: 40,
-      height: 40,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(color: Colors.black87),
-      ),
-      child: Icon(icon, size: 20),
-    ),
-  );
+        onTap: onTap,
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.black26),
+          ),
+          child: Icon(icon, size: 20),
+        ),
+      );
 
   Widget _tabs() {
-    const labels = ['Atrofda', 'Ulangan'];
+    const labels = ['Chatlar', 'Foydalanuvchilar'];
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
@@ -185,63 +362,6 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
               ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _tile(Peer p) {
-    final msgs = s.messagesOf(p.id);
-    final last = msgs.isEmpty ? null : msgs.last;
-    final unread = s.unread[p.id] ?? 0;
-    final sub = last != null
-        ? last.preview
-        : p.connected
-        ? 'Ulangan'
-        : p.connecting
-        ? 'Ulanmoqda...'
-        : 'Ulanish uchun bosing';
-    final color =
-    Colors.primaries[p.name.hashCode.abs() % Colors.primaries.length];
-
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(vertical: 4),
-      onTap: () => _onTap(p),
-      leading: CircleAvatar(
-        radius: 26,
-        backgroundColor: color.shade300,
-        child: Text(
-          p.name.isEmpty ? '?' : p.name[0].toUpperCase(),
-          style: const TextStyle(color: Colors.white, fontSize: 20),
-        ),
-      ),
-      title: Text(p.name,
-          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
-      subtitle: Text(
-        sub,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          fontSize: 12,
-          color: p.connecting ? kPurple : Colors.grey,
-        ),
-      ),
-      trailing: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          if (last != null)
-            Text(hm(last.time),
-                style: const TextStyle(fontSize: 11, color: Colors.grey)),
-          if (unread > 0)
-            Container(
-              margin: const EdgeInsets.only(top: 6),
-              padding: const EdgeInsets.all(6),
-              decoration:
-              const BoxDecoration(color: kPurple, shape: BoxShape.circle),
-              child: Text('$unread',
-                  style: const TextStyle(color: Colors.white, fontSize: 11)),
             ),
         ],
       ),

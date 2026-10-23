@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:open_filex/open_filex.dart';
@@ -10,9 +12,15 @@ import '../services/chat_service.dart';
 
 class ChatPage extends StatefulWidget {
   final ChatService service;
-  final String peerId;
+  final String peerUid;
+  final String peerName;
 
-  const ChatPage({super.key, required this.service, required this.peerId});
+  const ChatPage({
+    super.key,
+    required this.service,
+    required this.peerUid,
+    required this.peerName,
+  });
 
   @override
   State<ChatPage> createState() => _ChatPageState();
@@ -32,10 +40,9 @@ class _ChatPageState extends State<ChatPage> {
   void _send() {
     final text = _ctrl.text;
     _ctrl.clear();
-    s.send(widget.peerId, text);
+    s.send(widget.peerUid, text);
   }
 
-  // ---------- Rasm / fayl tanlash ----------
   void _attach() {
     showModalBottomSheet(
       context: context,
@@ -44,16 +51,16 @@ class _ChatPageState extends State<ChatPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.image_outlined),
-              title: const Text('Rasm'),
+              leading: const Icon(Icons.image_outlined, color: kPurple),
+              title: const Text('Rasm yuborish'),
               onTap: () {
                 Navigator.pop(sheet);
                 _pickImage();
               },
             ),
             ListTile(
-              leading: const Icon(Icons.insert_drive_file_outlined),
-              title: const Text('Fayl'),
+              leading: const Icon(Icons.insert_drive_file_outlined, color: kPurple),
+              title: const Text('Fayl yuborish'),
               onTap: () {
                 Navigator.pop(sheet);
                 _pickFile();
@@ -68,76 +75,64 @@ class _ChatPageState extends State<ChatPage> {
   Future<void> _pickImage() async {
     final x = await _picker.pickImage(
       source: ImageSource.gallery,
-      maxWidth: 1280, // rasm kichraytiriladi, tezroq yuboriladi
-      imageQuality: 70,
+      maxWidth: 1024,
+      imageQuality: 65,
     );
-    if (x != null) s.sendFile(widget.peerId, x.path, image: true);
+    if (x != null) s.sendFile(widget.peerUid, x.path, image: true);
   }
 
   Future<void> _pickFile() async {
     final r = await FilePicker.platform.pickFiles();
     final path = r?.files.single.path;
-    if (path != null) s.sendFile(widget.peerId, path, image: false);
+    if (path != null) s.sendFile(widget.peerUid, path, image: false);
   }
 
-  void _showImage(String path) {
-    showDialog(
-      context: context,
-      builder: (_) => Dialog.fullscreen(
-        backgroundColor: Colors.black,
-        child: Stack(
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: kPurple,
+      body: SafeArea(
+        child: Column(
           children: [
-            Center(
-              child: InteractiveViewer(child: Image.file(File(path))),
-            ),
-            Positioned(
-              top: 32,
-              left: 8,
-              child: IconButton(
-                icon: const Icon(Icons.close, color: Colors.white),
-                onPressed: () => Navigator.pop(context),
+            _header(widget.peerName),
+            Expanded(
+              child: StreamBuilder<List<Message>>(
+                stream: s.getMessagesStream(widget.peerUid),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(
+                      child: CircularProgressIndicator(color: Colors.white),
+                    );
+                  }
+
+                  final msgs = snapshot.data ?? [];
+                  if (msgs.isEmpty) {
+                    return const Center(
+                      child: Text(
+                        'Hozircha xabarlar yo\'q.\nXabar yozib chatni boshlang!',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                    );
+                  }
+
+                  return ListView.builder(
+                    reverse: true,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: msgs.length,
+                    itemBuilder: (_, i) => _bubble(msgs[i]),
+                  );
+                },
               ),
             ),
+            _input(),
           ],
         ),
       ),
     );
   }
 
-  // ---------- UI ----------
-  @override
-  Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: s,
-      builder: (context, _) {
-        final peer = s.peers[widget.peerId];
-        final online = peer?.connected ?? false;
-        final msgs = s.messagesOf(widget.peerId).reversed.toList();
-
-        return Scaffold(
-          backgroundColor: kPurple,
-          body: SafeArea(
-            child: Column(
-              children: [
-                _header(peer?.name ?? '?', online),
-                Expanded(
-                  child: ListView.builder(
-                    reverse: true,
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemCount: msgs.length,
-                    itemBuilder: (_, i) => _bubble(msgs[i]),
-                  ),
-                ),
-                _input(online),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _header(String name, bool online) {
+  Widget _header(String name) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 12, 16, 12),
       child: Row(
@@ -148,27 +143,29 @@ class _ChatPageState extends State<ChatPage> {
           ),
           CircleAvatar(
             backgroundColor: kPurpleLight,
-            child: Text(name.isEmpty ? '?' : name[0].toUpperCase(),
-                style: const TextStyle(color: Colors.white)),
+            child: Text(
+              name.isEmpty ? '?' : name[0].toUpperCase(),
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
           ),
           const SizedBox(width: 12),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(name,
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 16)),
-              Row(
+              Text(
+                name,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 16,
+                ),
+              ),
+              const Row(
                 children: [
-                  Icon(Icons.circle,
-                      size: 8,
-                      color: online ? Colors.greenAccent : Colors.white38),
-                  const SizedBox(width: 4),
-                  Text(online ? 'Online' : 'Oflayn',
-                      style:
-                      const TextStyle(color: Colors.white70, fontSize: 12)),
+                  Icon(Icons.circle, size: 8, color: Colors.greenAccent),
+                  SizedBox(width: 4),
+                  Text('Online Chat',
+                      style: TextStyle(color: Colors.white70, fontSize: 12)),
                 ],
               ),
             ],
@@ -210,14 +207,6 @@ class _ChatPageState extends State<ChatPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             content,
-            if (m.progress != null) ...[
-              const SizedBox(height: 6),
-              LinearProgressIndicator(
-                value: m.progress,
-                color: m.mine ? kPurple : Colors.white,
-                backgroundColor: Colors.black12,
-              ),
-            ],
             const SizedBox(height: 2),
             Text(
               hm(m.time),
@@ -234,40 +223,56 @@ class _ChatPageState extends State<ChatPage> {
 
   Widget _imageContent(Message m, double maxW, Color fg) {
     final path = m.path;
-    if (path == null) {
-      return SizedBox(
-        width: maxW * 0.6,
-        height: 120,
-        child: Center(child: CircularProgressIndicator(color: fg)),
-      );
+    if (path != null && path.startsWith('data:image')) {
+      try {
+        final base64Data = path.split(',').last;
+        final bytes = base64Decode(base64Data);
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.memory(
+            bytes,
+            width: maxW,
+            height: 200,
+            fit: BoxFit.cover,
+          ),
+        );
+      } catch (_) {}
     }
-    return GestureDetector(
-      onTap: () => _showImage(path),
-      child: ClipRRect(
+
+    if (path != null && !kIsWeb && File(path).existsSync()) {
+      return ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: Image.file(
           File(path),
           width: maxW,
           height: 200,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => SizedBox(
-            width: maxW * 0.6,
-            height: 80,
-            child: Center(child: Icon(Icons.broken_image, color: fg)),
-          ),
         ),
-      ),
+      );
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.image, color: fg),
+        const SizedBox(width: 8),
+        Text('📷 Rasm (${fmtSize(m.size)})', style: TextStyle(color: fg)),
+      ],
     );
   }
 
   Widget _fileContent(Message m, Color fg) {
     return InkWell(
-      onTap: m.path == null ? null : () => OpenFilex.open(m.path!),
+      onTap: () {
+        if (m.path != null && !kIsWeb && File(m.path!).existsSync()) {
+          OpenFilex.open(m.path!);
+        }
+      },
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.insert_drive_file_outlined, color: fg, size: 30),
-          const SizedBox(width: 10),
+          Icon(Icons.insert_drive_file_outlined, color: fg, size: 28),
+          const SizedBox(width: 8),
           Flexible(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -281,7 +286,7 @@ class _ChatPageState extends State<ChatPage> {
                 ),
                 Text(
                   fmtSize(m.size),
-                  style: TextStyle(color: fg.withOpacity(0.7), fontSize: 11),
+                  style: TextStyle(color: fg.withValues(alpha: 0.7), fontSize: 11),
                 ),
               ],
             ),
@@ -291,7 +296,7 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  Widget _input(bool online) {
+  Widget _input() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       child: Row(
@@ -307,16 +312,15 @@ class _ChatPageState extends State<ChatPage> {
                 children: [
                   IconButton(
                     icon: const Icon(Icons.attach_file, color: kPurple),
-                    onPressed: online ? _attach : null,
+                    onPressed: _attach,
                   ),
                   Expanded(
                     child: TextField(
                       controller: _ctrl,
-                      enabled: online,
                       onSubmitted: (_) => _send(),
-                      decoration: InputDecoration(
+                      decoration: const InputDecoration(
                         border: InputBorder.none,
-                        hintText: online ? 'Xabar yozing...' : 'Ulanish uzilgan',
+                        hintText: 'Xabar yozing...',
                       ),
                     ),
                   ),
@@ -326,12 +330,14 @@ class _ChatPageState extends State<ChatPage> {
           ),
           const SizedBox(width: 10),
           InkResponse(
-            onTap: online ? _send : null,
+            onTap: _send,
             child: Container(
               width: 48,
               height: 48,
               decoration: const BoxDecoration(
-                  color: Colors.white, shape: BoxShape.circle),
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
               child: const Icon(Icons.send_rounded, color: kPurple),
             ),
           ),

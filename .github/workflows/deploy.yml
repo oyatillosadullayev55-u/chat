@@ -1,0 +1,53 @@
+name: Build Flutter Web & Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Get Dependencies
+        run: flutter pub get
+
+      # 1. Build Web version for GitHub Pages
+      - name: Build Web
+        run: flutter build web --release --base-href "/${{ github.event.repository.name }}/"
+
+      # 2. Build Android APK
+      - name: Build APK
+        run: flutter build apk --release
+
+      # 3. Deploy Web to GitHub Pages branch (gh-pages)
+      - name: Deploy Web to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build/web
+
+      # 4. Upload APK as Artifact for download
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-app-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk

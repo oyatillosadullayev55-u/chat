@@ -6,28 +6,30 @@ import 'screens/name_page.dart';
 import 'services/chat_service.dart';
 import 'services/notification_service.dart';
 
-void main() => runApp(const BluetoothChatApp());
-
-class BluetoothChatApp extends StatefulWidget {
-  const BluetoothChatApp({super.key});
-
-  @override
-  State<BluetoothChatApp> createState() => _BluetoothChatAppState();
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const ChatApp());
 }
 
-class _BluetoothChatAppState extends State<BluetoothChatApp> {
+class ChatApp extends StatefulWidget {
+  const ChatApp({super.key});
+
+  @override
+  State<ChatApp> createState() => _ChatAppState();
+}
+
+class _ChatAppState extends State<ChatApp> {
   final _service = ChatService();
 
   @override
   void initState() {
     super.initState();
     NotificationService.init();
-    _service.load(); // saqlangan chatlarni yuklaydi
+    _service.load();
   }
 
   @override
   void dispose() {
-    _service.stopAll();
     _service.dispose();
     super.dispose();
   }
@@ -35,10 +37,12 @@ class _BluetoothChatAppState extends State<BluetoothChatApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      title: 'Online Chat',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorSchemeSeed: kPurple,
         scaffoldBackgroundColor: Colors.white,
+        useMaterial3: true,
       ),
       home: ListenableBuilder(
         listenable: _service,

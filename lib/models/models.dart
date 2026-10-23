@@ -5,57 +5,124 @@ const kPurpleLight = Color(0xFF7A6CF0);
 
 enum MsgType { text, image, file }
 
+class AppUser {
+  final String uid;
+  final String name;
+  final String email;
+  final bool isOnline;
+  final DateTime? lastSeen;
+
+  AppUser({
+    required this.uid,
+    required this.name,
+    this.email = '',
+    this.isOnline = true,
+    this.lastSeen,
+  });
+
+  Map<String, dynamic> toMap() => {
+        'uid': uid,
+        'name': name,
+        'searchName': name.toLowerCase(),
+        'email': email,
+        'isOnline': isOnline,
+        'lastSeen': lastSeen?.millisecondsSinceEpoch ??
+            DateTime.now().millisecondsSinceEpoch,
+      };
+
+  factory AppUser.fromMap(Map<String, dynamic> map, String id) {
+    return AppUser(
+      uid: id,
+      name: map['name'] ?? 'Foydalanuvchi',
+      email: map['email'] ?? '',
+      isOnline: map['isOnline'] ?? false,
+      lastSeen: map['lastSeen'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(map['lastSeen'] as int)
+          : null,
+    );
+  }
+}
+
 class Message {
+  final String id;
+  final String senderId;
+  final String senderName;
   final String text; // matn yoki fayl nomi
-  final bool mine;
-  final DateTime time;
   final MsgType type;
   final int size;
-  String? path; // saqlangan fayl yo'li
-  double? progress; // yuborilmoqda / qabul qilinmoqda (0..1), tugagach null
+  final String? path; // saqlangan fayl yo'li/data
+  final String? url;
+  final DateTime time;
+  final bool mine;
+  double? progress;
 
-  Message(
-      this.text, {
-        required this.mine,
-        this.type = MsgType.text,
-        this.size = 0,
-        this.path,
-        this.progress,
-        DateTime? time,
-      }) : time = time ?? DateTime.now();
+  Message({
+    this.id = '',
+    required this.senderId,
+    required this.senderName,
+    required this.text,
+    required this.mine,
+    this.type = MsgType.text,
+    this.size = 0,
+    this.path,
+    this.url,
+    this.progress,
+    DateTime? time,
+  }) : time = time ?? DateTime.now();
 
   String get preview => type == MsgType.image
       ? '📷 Rasm'
       : type == MsgType.file
-      ? '📎 $text'
-      : text;
+          ? '📎 $text'
+          : text;
 
-  Map<String, dynamic> toJson() => {
-    't': text,
-    'm': mine,
-    'ts': time.millisecondsSinceEpoch,
-    'k': type.index,
-    's': size,
-    'p': path,
-  };
+  Map<String, dynamic> toMap() => {
+        'senderId': senderId,
+        'senderName': senderName,
+        'text': text,
+        'type': type.index,
+        'size': size,
+        'path': path,
+        'url': url,
+        'timestamp': time.millisecondsSinceEpoch,
+      };
 
-  factory Message.fromJson(Map<String, dynamic> j) => Message(
-    j['t'] as String,
-    mine: j['m'] as bool,
-    time: DateTime.fromMillisecondsSinceEpoch(j['ts'] as int),
-    type: MsgType.values[j['k'] as int],
-    size: j['s'] as int,
-    path: j['p'] as String?,
-  );
+  factory Message.fromMap(
+      Map<String, dynamic> map, String docId, String currentUid) {
+    final sId = map['senderId'] ?? '';
+    return Message(
+      id: docId,
+      senderId: sId,
+      senderName: map['senderName'] ?? '',
+      text: map['text'] ?? '',
+      mine: sId == currentUid,
+      type: MsgType.values[(map['type'] ?? 0) as int],
+      size: (map['size'] ?? 0) as int,
+      path: map['path'] as String?,
+      url: map['url'] as String?,
+      time: DateTime.fromMillisecondsSinceEpoch(
+        map['timestamp'] as int? ?? DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+  }
 }
 
-class Peer {
-  final String id;
-  String name;
-  bool connected = false;
-  bool connecting = false;
+class ChatConversation {
+  final String chatId;
+  final String peerId;
+  final String peerName;
+  final String lastMessage;
+  final DateTime lastTime;
+  final int unread;
 
-  Peer(this.id, this.name);
+  ChatConversation({
+    required this.chatId,
+    required this.peerId,
+    required this.peerName,
+    required this.lastMessage,
+    required this.lastTime,
+    this.unread = 0,
+  });
 }
 
 String hm(DateTime t) =>
